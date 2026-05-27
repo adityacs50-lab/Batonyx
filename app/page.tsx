@@ -25,7 +25,7 @@ import { defaultTranscript, sampleDeals } from "./sample-data";
 import type { Deal, Handoff, HandoffField, Review, Transcript } from "./types";
 
 const requiredKeys = ["buying_story", "pain_points", "goals", "stakeholders", "risks", "promises", "next_steps"];
-const storageKey = "batonyx-mvp-state-v1";
+const storageKey = "batonyx-mvp-state-v2";
 const manualDealId = "manual-transcript-deal";
 
 export default function Home() {
@@ -561,21 +561,24 @@ function buildManualDeal(transcriptText: string, fileName?: string): Deal {
 }
 
 function detectAccountName(text: string) {
-  const patterns = [
-    /VP Customer Success,\s*([^)]+)\)/i,
-    /Head of RevOps,\s*([^)]+)\)/i,
-    /Customer Success,\s*([^)]+)\)/i,
-    /\b([A-Z][A-Za-z0-9&.\- ]+)\s+(?:team|legal team|CSMs)\b/,
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match?.[1]) {
-      return cleanDetectedName(match[1]);
-    }
+  const explicitIntro = text.match(/Quick context\s+[-—]\s+([A-Z][A-Za-z0-9&.\- ]+?)\s+just\b/i);
+  if (explicitIntro?.[1]) {
+    return cleanDetectedName(explicitIntro[1]);
   }
 
-  return undefined;
+  const companyCounts = new Map<string, number>();
+  const speakerMatches = Array.from(text.matchAll(/\(([^)]+)\)/g));
+
+  speakerMatches.forEach((match) => {
+    const parts = match[1].split(",").map((part) => part.trim());
+    const company = parts.length > 1 ? cleanDetectedName(parts[parts.length - 1]) : "";
+
+    if (isLikelyCompanyName(company)) {
+      companyCounts.set(company, (companyCounts.get(company) ?? 0) + 1);
+    }
+  });
+
+  return Array.from(companyCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
 }
 
 function detectAeName(text: string) {
@@ -621,4 +624,11 @@ function inferRole(title: string) {
 
 function cleanDetectedName(value: string) {
   return value.replace(/[,.)].*$/, "").trim();
+}
+
+function isLikelyCompanyName(value: string) {
+  if (!value || value.length < 2) return false;
+
+  const blocked = ["AE", "CSM", "Batonyx", "Customer Success", "RevOps", "Sales", "Legal", "Security"];
+  return !blocked.some((word) => value.toLowerCase() === word.toLowerCase());
 }
