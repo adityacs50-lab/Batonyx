@@ -442,7 +442,7 @@ function HandoffSection({
         onChange={(event) => onChange(event.target.value)}
         placeholder={`Add ${field.label.toLowerCase()} before sending to CS`}
       />
-      {field.key === "promises" && <PromiseTracker dealId={dealId} value={value} />}
+      {field.key === "promises" && <PromiseTracker dealId={dealId} evidence={field.evidence} value={value} />}
       {field.evidence.length > 0 && (
         <div className="evidence-list">
           {field.evidence.slice(0, 2).map((item, index) => (
@@ -467,23 +467,32 @@ function HandoffSection({
 }
 
 type PromiseStatus = "Pending" | "Delivered" | "Broken";
+type PromiseRisk = "Low" | "Medium" | "High";
+
+type PromiseCard = {
+  text: string;
+  category: string;
+  owner: string;
+  risk: PromiseRisk;
+  evidence: string;
+};
 
 const promiseStatusFlow: PromiseStatus[] = ["Pending", "Delivered", "Broken"];
 
-function PromiseTracker({ dealId, value }: { dealId: string; value: string }) {
-  const promises = useMemo(() => parsePromises(value), [value]);
+function PromiseTracker({ dealId, evidence, value }: { dealId: string; evidence: HandoffField["evidence"]; value: string }) {
+  const promiseCards = useMemo(() => buildPromiseCards(value, evidence), [value, evidence]);
   const [statuses, setStatuses] = useState<Record<number, PromiseStatus>>({});
 
   useEffect(() => {
     const nextStatuses: Record<number, PromiseStatus> = {};
 
-    promises.forEach((_, index) => {
+    promiseCards.forEach((_, index) => {
       const stored = window.localStorage.getItem(getPromiseStatusKey(dealId, index));
       nextStatuses[index] = isPromiseStatus(stored) ? stored : "Pending";
     });
 
     setStatuses(nextStatuses);
-  }, [dealId, promises]);
+  }, [dealId, promiseCards]);
 
   function cycleStatus(index: number) {
     setStatuses((current) => {
@@ -498,7 +507,7 @@ function PromiseTracker({ dealId, value }: { dealId: string; value: string }) {
     });
   }
 
-  if (promises.length === 0) {
+  if (promiseCards.length === 0) {
     return null;
   }
 
@@ -508,16 +517,27 @@ function PromiseTracker({ dealId, value }: { dealId: string; value: string }) {
         <ClipboardCheck size={16} />
         Promise tracker
       </div>
-      {promises.map((promise, index) => {
+      {promiseCards.map((promise, index) => {
         const status = statuses[index] ?? "Pending";
 
         return (
-          <div className="promise-row" key={`${dealId}-${index}-${promise.slice(0, 24)}`}>
-            <p>{promise}</p>
+          <article className="promise-card" key={`${dealId}-${index}-${promise.text.slice(0, 24)}`}>
+            <div className="promise-card-main">
+              <p>{promise.text}</p>
+              <div className="promise-meta">
+                <span>{promise.category}</span>
+                <span>Owner: {promise.owner}</span>
+                <span className={`risk-chip ${promise.risk.toLowerCase()}`}>{promise.risk} risk</span>
+              </div>
+              <div className="promise-evidence">
+                <strong>Evidence</strong>
+                <span>{promise.evidence}</span>
+              </div>
+            </div>
             <button className={`promise-pill ${status.toLowerCase()}`} onClick={() => cycleStatus(index)}>
               {status}
             </button>
-          </div>
+          </article>
         );
       })}
     </div>
@@ -604,8 +624,18 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
 }
 
+function buildPromiseCards(value: string, evidence: HandoffField["evidence"]): PromiseCard[] {
+  return parsePromises(value).map((promise, index) => ({
+    text: promise,
+    category: inferPromiseCategory(promise),
+    owner: inferPromiseOwner(promise),
+    risk: inferPromiseRisk(promise),
+    evidence: evidence[index]?.excerpt ?? findBestPromiseEvidence(promise, evidence) ?? "No source snippet captured.",
+  }));
+}
+
 function parsePromises(value: string) {
-  return value
+  const promises = value
     .split(/\n+|(?:^|\s)(?:\d+[\).]|[A-Z]\s*[—-])\s+/)
     .map((item) =>
       item
@@ -617,6 +647,8 @@ function parsePromises(value: string) {
     .flatMap((item) => splitInlineNumberedPromises(item))
     .map((item) => item.replace(/^[,;:.\s]+|[,;:\s]+$/g, "").trim())
     .filter((item) => item.length > 12);
+
+  return promises.map((promise) => promise.replace(/\s+and$/i, "").trim());
 }
 
 function splitInlineNumberedPromises(value: string) {
@@ -638,6 +670,83 @@ function getPromiseStatusKey(dealId: string, index: number) {
 
 function isPromiseStatus(value: string | null): value is PromiseStatus {
   return value === "Pending" || value === "Delivered" || value === "Broken";
+}
+
+function inferPromiseCategory(promise: string) {
+  const normalized = promise.toLowerCase();
+
+  if (normalized.includes("salesforce") || normalized.includes("gong") || normalized.includes("integration")) {
+    return "Integration";
+  }
+
+  if (normalized.includes("data") || normalized.includes("security") || normalized.includes("dpdp") || normalized.includes("residency")) {
+    return "Security/Data";
+  }
+
+  if (normalized.includes("slack") || normalized.includes("support") || normalized.includes("csm")) {
+    return "Support";
+  }
+
+  if (normalized.includes("qbr") || normalized.includes("review")) {
+    return "Success cadence";
+  }
+
+  if (normalized.includes("pilot") || normalized.includes("rollout")) {
+    return "Rollout";
+  }
+
+  if (normalized.includes("day") || normalized.includes("week") || normalized.includes("deadline")) {
+    return "Timeline";
+  }
+
+  return "Commitment";
+}
+
+function inferPromiseOwner(promise: string) {
+  const category = inferPromiseCategory(promise);
+
+  if (category === "Integration") return "Technical team";
+  if (category === "Security/Data") return "RevOps + Legal";
+  if (category === "Support") return "CSM";
+  if (category === "Success cadence") return "CS leadership";
+  if (category === "Rollout") return "CSM + RevOps";
+
+  return "AE + CSM";
+}
+
+function inferPromiseRisk(promise: string): PromiseRisk {
+  const normalized = promise.toLowerCase();
+
+  if (
+    normalized.includes("5 days") ||
+    normalized.includes("no additional cost") ||
+    normalized.includes("data") ||
+    normalized.includes("security") ||
+    normalized.includes("residency") ||
+    normalized.includes("custom")
+  ) {
+    return "High";
+  }
+
+  if (normalized.includes("integration") || normalized.includes("pilot") || normalized.includes("qbr") || normalized.includes("12 months")) {
+    return "Medium";
+  }
+
+  return "Low";
+}
+
+function findBestPromiseEvidence(promise: string, evidence: HandoffField["evidence"]) {
+  const promiseWords = promise
+    .toLowerCase()
+    .split(/\W+/)
+    .filter((word) => word.length > 4);
+
+  return evidence
+    .map((item) => ({
+      excerpt: item.excerpt,
+      score: promiseWords.filter((word) => item.excerpt.toLowerCase().includes(word)).length,
+    }))
+    .sort((a, b) => b.score - a.score)[0]?.excerpt;
 }
 
 function buildManualDeal(transcriptText: string, fileName?: string): Deal {
