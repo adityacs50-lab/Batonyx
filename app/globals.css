@@ -503,6 +503,42 @@ button {
   text-transform: uppercase;
 }
 
+.crm-editor {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.crm-editor label {
+  color: var(--muted);
+  display: grid;
+  font-size: 0.76rem;
+  font-weight: 760;
+  gap: 5px;
+  text-transform: uppercase;
+}
+
+.crm-editor input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  min-height: 38px;
+  outline: 0;
+  padding: 0 10px;
+  text-transform: none;
+}
+
+.crm-editor input:focus {
+  border-color: #6aa88e;
+  box-shadow: 0 0 0 3px rgba(31, 122, 87, 0.13);
+}
+
+.crm-editor-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+}
+
 .source-pill {
   align-items: center;
   background: var(--blue-soft);

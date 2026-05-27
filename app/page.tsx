@@ -26,6 +26,7 @@ import type { Deal, Handoff, HandoffField, Review, Transcript } from "./types";
 
 const requiredKeys = ["buying_story", "pain_points", "goals", "stakeholders", "risks", "promises", "next_steps"];
 const storageKey = "batonyx-mvp-state-v1";
+const manualDealId = "manual-transcript-deal";
 
 export default function Home() {
   const [selectedDealId, setSelectedDealId] = useState(sampleDeals[0].id);
@@ -35,6 +36,7 @@ export default function Home() {
   const [inlineComment, setInlineComment] = useState("Confirm data-retention language before kickoff.");
   const [aiFields, setAiFields] = useState<HandoffField[] | null>(null);
   const [extractionError, setExtractionError] = useState("");
+  const [manualDeal, setManualDeal] = useState<Deal>(() => buildManualDeal(defaultTranscript.content));
   const [review, setReview] = useState<Review>({
     reviewed: false,
     rating: 0,
@@ -42,7 +44,8 @@ export default function Home() {
     flags: [],
   });
 
-  const selectedDeal = sampleDeals.find((deal) => deal.id === selectedDealId) ?? sampleDeals[0];
+  const deals = useMemo(() => [manualDeal, ...sampleDeals], [manualDeal]);
+  const selectedDeal = deals.find((deal) => deal.id === selectedDealId) ?? manualDeal;
   const fallbackFields = useMemo(() => generateHandoffFields(selectedDeal, transcript), [selectedDeal, transcript]);
   const [editedFields, setEditedFields] = useState<Record<string, string>>({});
 
@@ -73,6 +76,7 @@ export default function Home() {
         transcript?: Transcript;
         editedFields?: Record<string, string>;
         aiFields?: HandoffField[] | null;
+        manualDeal?: Deal;
         review?: Review;
         notificationSent?: boolean;
         inlineComment?: string;
@@ -80,6 +84,7 @@ export default function Home() {
 
       if (parsed.selectedDealId) setSelectedDealId(parsed.selectedDealId);
       if (parsed.transcript) setTranscript(parsed.transcript);
+      if (parsed.manualDeal) setManualDeal(parsed.manualDeal);
       if (parsed.editedFields) setEditedFields(parsed.editedFields);
       if (parsed.aiFields) setAiFields(parsed.aiFields);
       if (parsed.review) setReview(parsed.review);
@@ -98,12 +103,13 @@ export default function Home() {
         transcript,
         editedFields,
         aiFields,
+        manualDeal,
         review,
         notificationSent,
         inlineComment,
       }),
     );
-  }, [selectedDealId, transcript, editedFields, aiFields, review, notificationSent, inlineComment]);
+  }, [selectedDealId, transcript, editedFields, aiFields, manualDeal, review, notificationSent, inlineComment]);
 
   function handleDealChange(event: ChangeEvent<HTMLSelectElement>) {
     setSelectedDealId(event.target.value);
@@ -115,6 +121,9 @@ export default function Home() {
   }
 
   function handleTranscriptText(value: string) {
+    const nextManualDeal = buildManualDeal(value);
+    setManualDeal(nextManualDeal);
+    setSelectedDealId(manualDealId);
     setTranscript((current) => ({
       ...current,
       source: "Manual Upload",
@@ -131,6 +140,9 @@ export default function Home() {
     const file = event.target.files?.[0];
     if (!file) return;
     const content = await file.text();
+    const nextManualDeal = buildManualDeal(content, file.name);
+    setManualDeal(nextManualDeal);
+    setSelectedDealId(manualDealId);
     setTranscript({
       id: `transcript-${Date.now()}`,
       title: file.name,
@@ -139,6 +151,13 @@ export default function Home() {
       content,
     });
     setNotificationSent(false);
+    setAiFields(null);
+    setExtractionError("");
+  }
+
+  function updateManualDeal(updates: Partial<Deal>) {
+    setManualDeal((current) => ({ ...current, ...updates }));
+    setSelectedDealId(manualDealId);
     setAiFields(null);
     setExtractionError("");
   }
@@ -214,7 +233,7 @@ export default function Home() {
             <label className="select-control">
               <span>Deal</span>
               <select value={selectedDealId} onChange={handleDealChange}>
-                {sampleDeals.map((deal) => (
+                {deals.map((deal) => (
                   <option value={deal.id} key={deal.id}>
                     {deal.name}
                   </option>
@@ -298,16 +317,49 @@ export default function Home() {
             <section className="panel-section">
               <div className="section-title">
                 <Cloud size={18} />
-                <h3>HubSpot sync</h3>
+                <h3>CRM context</h3>
               </div>
-              <p className="muted">One CRM connector for MVP. Deal context, contacts, ACV, owner, stage, and notes are imported into the handoff.</p>
+              <p className="muted">Deal context can come from the mock CRM or the uploaded transcript. Edit this before generating for a cleaner demo.</p>
+              {selectedDealId === manualDealId && (
+                <div className="crm-editor">
+                  <label>
+                    Account
+                    <input
+                      value={manualDeal.accountName}
+                      onChange={(event) =>
+                        updateManualDeal({
+                          accountName: event.target.value,
+                          name: `${event.target.value || "Customer"} - Sales-to-CS Handoff`,
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    Deal
+                    <input value={manualDeal.name} onChange={(event) => updateManualDeal({ name: event.target.value })} />
+                  </label>
+                  <div className="crm-editor-grid">
+                    <label>
+                      Owner
+                      <input value={manualDeal.owner} onChange={(event) => updateManualDeal({ owner: event.target.value })} />
+                    </label>
+                    <label>
+                      CSM
+                      <input
+                        value={manualDeal.assignedCsm}
+                        onChange={(event) => updateManualDeal({ assignedCsm: event.target.value })}
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
               <div className="integration-row">
-                <span>Connected</span>
-                <strong>batonyx-demo.hubspot.com</strong>
+                <span>{selectedDealId === manualDealId ? "Transcript-derived" : "Connected"}</span>
+                <strong>{selectedDealId === manualDealId ? selectedDeal.accountName : "batonyx-demo.hubspot.com"}</strong>
               </div>
               <button className="secondary-action" onClick={runExtraction} disabled={isExtracting}>
                 <RefreshCw size={17} />
-                Sync deal context
+                {selectedDealId === manualDealId ? "Refresh handoff" : "Sync deal context"}
               </button>
             </section>
 
@@ -488,4 +540,85 @@ function StatusBadge({ status }: { status: Handoff["status"] }) {
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
+}
+
+function buildManualDeal(transcriptText: string, fileName?: string): Deal {
+  const accountName = detectAccountName(transcriptText) ?? "Uploaded Customer";
+  const csmName = detectCsmName(transcriptText) ?? "Jordan Patel";
+
+  return {
+    id: manualDealId,
+    name: `${accountName} - Sales-to-CS Handoff`,
+    accountName,
+    stage: "Closed Won",
+    closeDate: new Date().toISOString().slice(0, 10),
+    owner: detectAeName(transcriptText) ?? "Sarah Kim",
+    assignedCsm: csmName,
+    acv: "TBD",
+    contacts: detectContacts(transcriptText),
+    notes: `Manual transcript upload${fileName ? ` from ${fileName}` : ""}. Use the transcript as the source of truth for account context, stakeholders, risks, promises, and next steps.`,
+  };
+}
+
+function detectAccountName(text: string) {
+  const patterns = [
+    /VP Customer Success,\s*([^)]+)\)/i,
+    /Head of RevOps,\s*([^)]+)\)/i,
+    /Customer Success,\s*([^)]+)\)/i,
+    /\b([A-Z][A-Za-z0-9&.\- ]+)\s+(?:team|legal team|CSMs)\b/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      return cleanDetectedName(match[1]);
+    }
+  }
+
+  return undefined;
+}
+
+function detectAeName(text: string) {
+  const match = text.match(/\d{2}:\d{2}\s+([^:(]+)\s+\(AE\)/i);
+  return match?.[1]?.trim();
+}
+
+function detectCsmName(text: string) {
+  const match = text.match(/\d{2}:\d{2}\s+([^:(]+)\s+\(CSM/i);
+  return match?.[1]?.trim();
+}
+
+function detectContacts(text: string) {
+  const matches = Array.from(text.matchAll(/\d{2}:\d{2}\s+([^:(]+)\s+\(([^)]+)\)/g));
+  const seen = new Set<string>();
+
+  return matches
+    .map((match, index) => ({
+      id: `manual-contact-${index}`,
+      name: match[1].trim(),
+      title: match[2].trim(),
+      role: inferRole(match[2]),
+      email: "",
+    }))
+    .filter((contact) => {
+      const key = contact.name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function inferRole(title: string) {
+  const normalized = title.toLowerCase();
+  if (normalized.includes("ae")) return "Account executive";
+  if (normalized.includes("csm")) return "Assigned CSM";
+  if (normalized.includes("revops")) return "Primary champion";
+  if (normalized.includes("vp") || normalized.includes("founder")) return "Economic buyer";
+  if (normalized.includes("security")) return "Technical evaluator";
+  if (normalized.includes("legal")) return "Legal reviewer";
+  return "Stakeholder";
+}
+
+function cleanDetectedName(value: string) {
+  return value.replace(/[,.)].*$/, "").trim();
 }
