@@ -304,6 +304,7 @@ export default function Home() {
                 <HandoffSection
                   field={field}
                   key={field.key}
+                  dealId={selectedDeal.id}
                   value={editedFields[field.key] ?? field.value}
                   onChange={(value) => setEditedFields((current) => ({ ...current, [field.key]: value }))}
                   comment={field.key === "risks" ? inlineComment : ""}
@@ -413,12 +414,14 @@ export default function Home() {
 
 function HandoffSection({
   field,
+  dealId,
   value,
   onChange,
   comment,
   onCommentChange,
 }: {
   field: HandoffField;
+  dealId: string;
   value: string;
   onChange: (value: string) => void;
   comment?: string;
@@ -439,6 +442,7 @@ function HandoffSection({
         onChange={(event) => onChange(event.target.value)}
         placeholder={`Add ${field.label.toLowerCase()} before sending to CS`}
       />
+      {field.key === "promises" && <PromiseTracker dealId={dealId} value={value} />}
       {field.evidence.length > 0 && (
         <div className="evidence-list">
           {field.evidence.slice(0, 2).map((item, index) => (
@@ -459,6 +463,64 @@ function HandoffSection({
         </label>
       )}
     </section>
+  );
+}
+
+type PromiseStatus = "Pending" | "Delivered" | "Broken";
+
+const promiseStatusFlow: PromiseStatus[] = ["Pending", "Delivered", "Broken"];
+
+function PromiseTracker({ dealId, value }: { dealId: string; value: string }) {
+  const promises = useMemo(() => parsePromises(value), [value]);
+  const [statuses, setStatuses] = useState<Record<number, PromiseStatus>>({});
+
+  useEffect(() => {
+    const nextStatuses: Record<number, PromiseStatus> = {};
+
+    promises.forEach((_, index) => {
+      const stored = window.localStorage.getItem(getPromiseStatusKey(dealId, index));
+      nextStatuses[index] = isPromiseStatus(stored) ? stored : "Pending";
+    });
+
+    setStatuses(nextStatuses);
+  }, [dealId, promises]);
+
+  function cycleStatus(index: number) {
+    setStatuses((current) => {
+      const currentStatus = current[index] ?? "Pending";
+      const nextStatus = promiseStatusFlow[(promiseStatusFlow.indexOf(currentStatus) + 1) % promiseStatusFlow.length];
+      window.localStorage.setItem(getPromiseStatusKey(dealId, index), nextStatus);
+
+      return {
+        ...current,
+        [index]: nextStatus,
+      };
+    });
+  }
+
+  if (promises.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="promise-tracker">
+      <div className="promise-tracker-title">
+        <ClipboardCheck size={16} />
+        Promise tracker
+      </div>
+      {promises.map((promise, index) => {
+        const status = statuses[index] ?? "Pending";
+
+        return (
+          <div className="promise-row" key={`${dealId}-${index}-${promise.slice(0, 24)}`}>
+            <p>{promise}</p>
+            <button className={`promise-pill ${status.toLowerCase()}`} onClick={() => cycleStatus(index)}>
+              {status}
+            </button>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -540,6 +602,42 @@ function StatusBadge({ status }: { status: Handoff["status"] }) {
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
+}
+
+function parsePromises(value: string) {
+  return value
+    .split(/\n+|(?:^|\s)(?:\d+[\).]|[A-Z]\s*[—-])\s+/)
+    .map((item) =>
+      item
+        .replace(/^Promises? made during the sales process include:?\s*/i, "")
+        .replace(/^Commitments? made during the sales process include:?\s*/i, "")
+        .replace(/^Next commitments? include:?\s*/i, "")
+        .trim(),
+    )
+    .flatMap((item) => splitInlineNumberedPromises(item))
+    .map((item) => item.replace(/^[,;:.\s]+|[,;:\s]+$/g, "").trim())
+    .filter((item) => item.length > 12);
+}
+
+function splitInlineNumberedPromises(value: string) {
+  const normalized = value.trim();
+
+  if (!/\(\d+\)/.test(normalized)) {
+    return [normalized];
+  }
+
+  return normalized
+    .split(/\s*\(\d+\)\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getPromiseStatusKey(dealId: string, index: number) {
+  return `promiseStatus-${dealId}-${index}`;
+}
+
+function isPromiseStatus(value: string | null): value is PromiseStatus {
+  return value === "Pending" || value === "Delivered" || value === "Broken";
 }
 
 function buildManualDeal(transcriptText: string, fileName?: string): Deal {
